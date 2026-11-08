@@ -1,0 +1,168 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v1.0.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - goos: linux
+            goarch: amd64
+            goarm: ''
+            name: linux-amd64
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            goarm: ''
+            name: linux-arm64
+            archive: tar.gz
+          - goos: linux
+            goarch: arm
+            goarm: '7'
+            name: linux-armv7
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            goarm: ''
+            name: darwin-amd64
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            goarm: ''
+            name: darwin-arm64
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            goarm: ''
+            name: windows-amd64
+            archive: zip
+          - goos: windows
+            goarch: arm64
+            goarm: ''
+            name: windows-arm64
+            archive: zip
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: false
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+          GOARM: ${{ matrix.target.goarm }}
+          CGO_ENABLED: 0
+        run: |
+          TAG="${{ inputs.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          if [ -z "$TAG" ]; then
+            TAG="dev"
+          fi
+
+          BINARY_NAME="nga"
+          if [ "${{ matrix.target.goos }}" = "windows" ]; then
+            BINARY_NAME="nga.exe"
+          fi
+
+          mkdir -p bin
+          go build -trimpath -ldflags="-s -w -X nga/cmd.Version=${TAG}" -o "bin/${BINARY_NAME}" .
+
+      - name: Package archive
+        run: |
+          TAG="${{ inputs.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          if [ -z "$TAG" ]; then
+            TAG="dev"
+          fi
+
+          ARCHIVE_BASENAME="nga_${TAG}_${{ matrix.target.name }}"
+          mkdir -p dist
+
+          [ -f README.md ] && cp README.md bin/
+          [ -f LICENSE ] && cp LICENSE bin/
+
+          if [ "${{ matrix.target.archive }}" = "zip" ]; then
+            (cd bin && zip -9 -r "../dist/${ARCHIVE_BASENAME}.zip" .)
+          else
+            tar -czvf "dist/${ARCHIVE_BASENAME}.tar.gz" -C bin .
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target.name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Determine Release Tag
+        id: release_tag
+        run: |
+          TAG="${{ inputs.tag_name }}"
+          if [ -n "$TAG" ]; then
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=nightly" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate Checksums
+        run: |
+          cd dist
+          sha256sum nga_* > checksums.txt
+          echo "=== Checksums ==="
+          cat checksums.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          name: NGA CLI Release ${{ steps.release_tag.outputs.tag }}
+          files: |
+            dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

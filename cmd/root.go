@@ -16,6 +16,7 @@ import (
 )
 
 var (
+	Version     = "dev"
 	cfgFile     string
 	flagProxy   string
 	flagUID     int64
@@ -48,6 +49,7 @@ func Execute() {
 }
 
 func init() {
+	RootCmd.Version = Version
 	cobra.OnInitialize(initConfig)
 
 	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "配置文件路径 (默认: ~/.config/nga/config.yaml)")

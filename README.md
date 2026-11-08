@@ -2,9 +2,14 @@
 
 [![Go](https://img.shields.io/badge/Go-1.18+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![SQLite](https://img.shields.io/badge/SQLite-PureGo-003B57?style=flat&logo=sqlite)](https://modernc.org/sqlite)
+[![GitHub Release](https://img.shields.io/github/v/release/fimreal/nga-cli?style=flat&logo=github)](https://github.com/fimreal/nga-cli/releases)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 NGA CLI 是一个专为终端开发者、Homelab 运维及论坛重度用户设计的轻量、极简流量、防风控的 NGA 命令行客户端。
+
+> **仓库主页**：
+> - **GitHub（公开开源主页）**：[https://github.com/fimreal/nga-cli](https://github.com/fimreal/nga-cli)
+> - **Gitea（内网镜像）**：[https://git.epurs.com/fimreal/nga-cli](https://git.epurs.com/fimreal/nga-cli)
 
 ---
 
@@ -23,9 +28,53 @@ NGA CLI 是一个专为终端开发者、Homelab 运维及论坛重度用户设�
 
 ---
 
-## 构建与快速上手
+## 安装与快速上手
 
-### 1. 构建
+### 1. 下载预编译二进制 (推荐)
+
+项目通过自动化构建流水线为各大主流系统与架构提供静态编译的预编译产物，开箱即用，无需配置 Go 开发环境。
+
+前往 **[GitHub Releases 页面](https://github.com/fimreal/nga-cli/releases)** 获取最新发行包：
+
+| 操作系统 (OS) | CPU 架构 (Arch) | 预编译资产包 | 格式 |
+| :--- | :--- | :--- | :--- |
+| **Linux** | x86_64 (`amd64`) | `nga_<tag>_linux-amd64.tar.gz` | `.tar.gz` |
+| | AArch64 / ARM64 (`arm64`) | `nga_<tag>_linux-arm64.tar.gz` | `.tar.gz` |
+| | ARMv7 (`armv7`) | `nga_<tag>_linux-armv7.tar.gz` | `.tar.gz` |
+| **macOS** | Apple Silicon (`arm64`) | `nga_<tag>_darwin-arm64.tar.gz` | `.tar.gz` |
+| | Intel 64-bit (`amd64`) | `nga_<tag>_darwin-amd64.tar.gz` | `.tar.gz` |
+| **Windows** | x86_64 (`amd64`) | `nga_<tag>_windows-amd64.zip` | `.zip` |
+| | ARM64 (`arm64`) | `nga_<tag>_windows-arm64.zip` | `.zip` |
+
+#### Linux / macOS 快速安装
+```bash
+# 下载对应平台的最新 tar.gz 包并解压 (以 Linux amd64 为例)
+curl -sSL -O https://github.com/fimreal/nga-cli/releases/latest/download/nga_latest_linux-amd64.tar.gz
+tar -xzf nga_latest_linux-amd64.tar.gz
+
+# 赋予执行权限并放入系统 PATH
+chmod +x nga
+sudo mv nga /usr/local/bin/
+
+# 验证安装
+nga --version
+nga doctor
+```
+
+#### Windows 快速安装
+1. 下载 `nga_<tag>_windows-amd64.zip` 或 `nga_<tag>_windows-arm64.zip`；
+2. 解压获取 `nga.exe`；
+3. 将解压目录加入系统环境变量 `Path`，或在当前目录通过 PowerShell / CMD 运行 `.\nga.exe doctor`。
+
+#### 完整性校验
+每个 Release 均包含由构建流水线自动生成的 `checksums.txt`，可通过 SHA256 校验包的完整性：
+```bash
+sha256sum -c checksums.txt
+```
+
+---
+
+### 2. 源码构建 (开发者模式)
 ```bash
 # 本地编译生成可执行二进制
 go build -o nga .
@@ -34,7 +83,7 @@ go build -o nga .
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ```
 
-### 2. 多账号 Profile 管理 (`profile`)
+### 3. 多账号 Profile 管理 (`profile`)
 ```bash
 # 查看所有已配置的账号 Profile
 ./nga profile list
@@ -52,7 +101,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ./nga profile remove alt
 ```
 
-### 3. 网络与风控健康度诊断 (`doctor`)
+### 4. 网络与风控健康度诊断 (`doctor`)
 在首次使用或配置代理后，运行诊断检查网络与 WAF 状态：
 ```bash
 # 标准终端格式
@@ -65,7 +114,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ./nga doctor --proxy socks5://127.0.0.1:7890
 ```
 
-### 4. 读取帖子与缓存控制 (`read`)
+### 5. 读取帖子与缓存控制 (`read`)
 ```bash
 # 读取指定帖子第 1 页 (自动使用本地 SQLite 缓存，二次读取 < 10ms)
 ./nga read 38888888
@@ -89,7 +138,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ./nga read 38888888 --json | jq '.posts[0]'
 ```
 
-### 5. 尾部查看与流式实时监听 (`tail` / `tail -f`)
+### 6. 尾部查看与流式实时监听 (`tail` / `tail -f`)
 ```bash
 # 查看最后 10 楼 (默认)
 ./nga tail 38888888
@@ -107,7 +156,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ./nga tail 38888888 -f --author
 ```
 
-### 6. 发帖与回复 (`reply` / `post`)
+### 7. 发帖与回复 (`reply` / `post`)
 ```bash
 # 直接回复帖子
 ./nga reply 38888888 -m "感谢楼主分享，已收藏！"
