@@ -178,8 +178,22 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 
 ## 最佳实践与 Agent Skill 规范
 
-针对 10万+ 楼超大体量帖子极速直算、最小流量优化、特定人员/楼主过滤、防风控流式监听以及下游自动化管道集成，详见专属规范文档（支持作为 AI Agent Skill 原生安装）：
-- [NGA 帖子监控与特定用户回复追踪最佳实践与规范 (Skill)](docs/skills/nga-thread-monitor/SKILL.md)
+为方便 AI Agent（如 Multica、Codex、Claude 等）自主调度与自动化集成，本项目提供符合标准 Agent Skill 规范的元数据与说明文档，同时支持人类开发者作为运维速查手册：
+
+| Skill 名称 | 规范文档路径 | 核心能力与适用场景 |
+| :--- | :--- | :--- |
+| **`nga-cli`** | [通用命令用法与动态交互规范](docs/skills/nga-cli/SKILL.md) | **通用 CLI 调度与自省**：全命令矩阵、JSON 结构化调用、Profile 凭据与代理切换，内置“版本探测与动态自省机制”，保证在 CLI 后续功能扩展后依然长效保鲜。 |
+| **`nga-thread-monitor`** | [特定用户回复监控与流式监听规范](docs/skills/nga-thread-monitor/SKILL.md) | **大帖与流式监控**：10万+ 楼超大热帖末页数学直算、全局最小流量、特定人员/楼主过滤、流式监听防风控退避抖动及 Webhook 管道集成。 |
+
+### Agent Skill 安装与使用
+在 Multica / Codex 规范的工作区中，可直接将对应目录放置于 `.agents/skills/` 下，平台即会自动发现并装载工具权限：
+```bash
+# 安装通用命令用法 Skill
+mkdir -p .agents/skills/nga-cli && cp docs/skills/nga-cli/SKILL.md .agents/skills/nga-cli/
+
+# 安装大帖与特定用户回复监控 Skill
+mkdir -p .agents/skills/nga-thread-monitor && cp docs/skills/nga-thread-monitor/SKILL.md .agents/skills/nga-thread-monitor/
+```
 
 ---
 
