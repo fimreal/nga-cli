@@ -7,8 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag (e.g. v1.0.0)'
-        required: false
+        description: 'Release Tag (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
         type: string
 
 permissions:
@@ -76,11 +77,11 @@ jobs:
           CGO_ENABLED: 0
         run: |
           TAG="${{ inputs.tag_name }}"
-          if [ -z "$TAG" ]; then
+          if [ -z "$TAG" ] && [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF_NAME}"
           fi
-          if [ -z "$TAG" ]; then
-            TAG="dev"
+          if [ -z "$TAG" ] || [ "$TAG" = "main" ]; then
+            TAG="v0.1.0"
           fi
 
           BINARY_NAME="nga"
@@ -94,11 +95,11 @@ jobs:
       - name: Package archive
         run: |
           TAG="${{ inputs.tag_name }}"
-          if [ -z "$TAG" ]; then
+          if [ -z "$TAG" ] && [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF_NAME}"
           fi
-          if [ -z "$TAG" ]; then
-            TAG="dev"
+          if [ -z "$TAG" ] || [ "$TAG" = "main" ]; then
+            TAG="v0.1.0"
           fi
 
           ARCHIVE_BASENAME="nga_${TAG}_${{ matrix.target.name }}"
@@ -128,24 +129,43 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Release Tag
+        id: release_tag
+        run: |
+          TAG="${{ inputs.tag_name }}"
+          if [ -z "$TAG" ] && [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          if [ -z "$TAG" ] || [ "$TAG" = "main" ]; then
+            TAG="v0.1.0"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Ensure Git Tag Exists
+        env:
+          TAG: ${{ steps.release_tag.outputs.tag }}
+        run: |
+          if git rev-parse "${TAG}" >/dev/null 2>&1 || git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
+            echo "Git tag ${TAG} already exists."
+          else
+            echo "Creating and pushing git tag ${TAG}..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "${TAG}"
+          fi
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: release-*
           merge-multiple: true
-
-      - name: Determine Release Tag
-        id: release_tag
-        run: |
-          TAG="${{ inputs.tag_name }}"
-          if [ -n "$TAG" ]; then
-            echo "tag=$TAG" >> $GITHUB_OUTPUT
-          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=nightly" >> $GITHUB_OUTPUT
-          fi
 
       - name: Generate Checksums
         run: |
