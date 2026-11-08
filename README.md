@@ -182,13 +182,36 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 | **`nga-thread-monitor`** | [特定用户回复监控与流式监听规范](docs/skills/nga-thread-monitor/SKILL.md) | **大帖与流式监控**：10万+ 楼超大热帖末页数学直算、全局最小流量、特定人员/楼主过滤、流式监听防风控退避抖动及 Webhook 管道集成。 |
 
 ### Agent Skill 安装与使用
-在 Multica / Codex 规范的工作区中，可直接将对应目录放置于 `.agents/skills/` 下，平台即会自动发现并装载工具权限：
+
+在 Multica、Codex 等规范工作区中，只需将 Skill 规范文件放置于当前工作区的 `.agents/skills/<skill-name>/SKILL.md`，Agent 平台即会自动发现并装载。
+
+提供 **curl / PowerShell 一句话全自动安装**：
+
+#### 1. Linux / macOS (Bash)
+```bash
+# 一键安装全部 Agent Skill（自动建立 .agents/skills/ 结构并拉取规范）
+curl -sSL https://raw.githubusercontent.com/fimreal/nga-cli/main/scripts/install-skills.sh | bash
+
+# 仅安装指定的单个 Skill (例如 nga-cli 或 nga-thread-monitor)
+curl -sSL https://raw.githubusercontent.com/fimreal/nga-cli/main/scripts/install-skills.sh | bash -s -- nga-cli
+```
+
+#### 2. Windows (PowerShell)
+```powershell
+# 一键安装全部 Agent Skill
+irm https://raw.githubusercontent.com/fimreal/nga-cli/main/scripts/install-skills.ps1 | iex
+
+# 仅安装指定的单个 Skill
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/fimreal/nga-cli/main/scripts/install-skills.ps1))) nga-cli
+```
+
+#### 3. 极简单行 curl（免执行脚本，直接获取规范文件）
 ```bash
 # 安装通用命令用法 Skill
-mkdir -p .agents/skills/nga-cli && cp docs/skills/nga-cli/SKILL.md .agents/skills/nga-cli/
+mkdir -p .agents/skills/nga-cli && curl -fsSL https://raw.githubusercontent.com/fimreal/nga-cli/main/docs/skills/nga-cli/SKILL.md -o .agents/skills/nga-cli/SKILL.md
 
-# 安装大帖与特定用户回复监控 Skill
-mkdir -p .agents/skills/nga-thread-monitor && cp docs/skills/nga-thread-monitor/SKILL.md .agents/skills/nga-thread-monitor/
+# 安装大帖监控与特定用户回复追踪 Skill
+mkdir -p .agents/skills/nga-thread-monitor && curl -fsSL https://raw.githubusercontent.com/fimreal/nga-cli/main/docs/skills/nga-thread-monitor/SKILL.md -o .agents/skills/nga-thread-monitor/SKILL.md
 ```
 
 ---
@@ -241,6 +264,7 @@ flowchart TD
 │   └── model/         # Thread, Post, DoctorReport 等领域模型
 ├── docs/
 │   └── skills/        # Agent Skill 规范与最佳实践指南
+├── scripts/           # Skill 一键安装脚本 (install-skills.sh / .ps1)
 ├── Dockerfile         # 极简多阶段构建 Alpine 镜像
 ├── docker-compose.yml # 容器化部署模版
 ├── main.go            # 命令行入口
