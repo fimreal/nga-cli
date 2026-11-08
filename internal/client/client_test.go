@@ -219,3 +219,134 @@ func TestClientPostUnauthenticated(t *testing.T) {
 		t.Errorf("expected unauthenticated error, got: %v", err)
 	}
 }
+
+func TestClientCheckIn_Success(t *testing.T) {
+	requestedPath := ""
+	requestedUA := ""
+	requestedXUA := ""
+	requestedCookie := ""
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.String()
+		requestedUA = r.Header.Get("User-Agent")
+		requestedXUA = r.Header.Get("X-User-Agent")
+		requestedCookie = r.Header.Get("Cookie")
+
+		raw := `{"data":{"0":"每日签到成功，获得金币奖励"},"time":1794137000}`
+		gbkBytes, _ := EncodeGBK(raw)
+		w.Header().Set("Content-Type", "application/json; charset=GBK")
+		w.Write(gbkBytes)
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	cli, err := New(Config{
+		BaseURL:     server.URL,
+		CookieUID:   88888,
+		CookieCID:   "test_cid",
+		RateLimitMs: 10,
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	res, err := cli.CheckIn(context.Background(), false)
+	if err != nil {
+		t.Fatalf("CheckIn failed: %v", err)
+	}
+
+	if !res.Success {
+		t.Errorf("expected success true, got false")
+	}
+	if !strings.Contains(res.Message, "每日签到成功") {
+		t.Errorf("unexpected message: %s", res.Message)
+	}
+	if !strings.Contains(requestedPath, "__lib=check_in&__act=check_in") {
+		t.Errorf("unexpected requested path: %s", requestedPath)
+	}
+	if requestedXUA != "Nga_Official" {
+		t.Errorf("expected X-User-Agent: Nga_Official, got: %s", requestedXUA)
+	}
+	if !strings.Contains(requestedCookie, "ngaPassportUid=88888") || !strings.Contains(requestedCookie, "ngaPassportCid=test_cid") {
+		t.Errorf("unexpected cookie: %s", requestedCookie)
+	}
+	_ = requestedUA
+}
+
+func TestClientCheckIn_AlreadyDone(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw := `{"error":{"0":"你今天已经签到过了"},"time":1794137000}`
+		gbkBytes, _ := EncodeGBK(raw)
+		w.Header().Set("Content-Type", "application/json; charset=GBK")
+		w.Write(gbkBytes)
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	cli, err := New(Config{
+		BaseURL:     server.URL,
+		CookieUID:   88888,
+		CookieCID:   "test_cid",
+		RateLimitMs: 10,
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	res, err := cli.CheckIn(context.Background(), true)
+	if err != nil {
+		t.Fatalf("CheckIn with already done should not error, got: %v", err)
+	}
+
+	if !res.AlreadyDone {
+		t.Errorf("expected AlreadyDone true, got false")
+	}
+	if !strings.Contains(res.Message, "已经签到") {
+		t.Errorf("expected message containing '已经签到', got: %s", res.Message)
+	}
+}
+
+func TestClientCheckIn_Unauthenticated(t *testing.T) {
+	cli, _ := New(Config{
+		CookieUID: 0,
+		CookieCID: "",
+	})
+	_, err := cli.CheckIn(context.Background(), false)
+	if err == nil || !strings.Contains(err.Error(), "未鉴权") {
+		t.Errorf("expected unauthenticated error, got: %v", err)
+	}
+}
+
+func TestClientGetCheckInStat(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw := `{"data":{"continued":7,"sum":120},"time":1794137000}`
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(raw))
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	cli, err := New(Config{
+		BaseURL:     server.URL,
+		CookieUID:   88888,
+		CookieCID:   "test_cid",
+		RateLimitMs: 10,
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	stat, err := cli.GetCheckInStat(context.Background())
+	if err != nil {
+		t.Fatalf("GetCheckInStat failed: %v", err)
+	}
+	if !stat.Success {
+		t.Errorf("expected stat success true, got false")
+	}
+	if !strings.Contains(stat.Stat, "continued") {
+		t.Errorf("expected stat containing 'continued', got: %s", stat.Stat)
+	}
+}

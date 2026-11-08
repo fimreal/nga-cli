@@ -89,6 +89,13 @@ func (s *Store) initSchema() error {
 		hash_key TEXT PRIMARY KEY,
 		submitted_at INTEGER
 	);
+
+	CREATE TABLE IF NOT EXISTS checkins (
+		uid INTEGER,
+		checkin_date TEXT,
+		created_at INTEGER,
+		PRIMARY KEY (uid, checkin_date)
+	);
 	`
 	_, err := s.db.Exec(schema)
 	return err
@@ -274,5 +281,37 @@ func (s *Store) CheckAndRecordSubmission(hashKey string, ttl time.Duration, forc
 		VALUES (?, ?)
 		ON CONFLICT(hash_key) DO UPDATE SET submitted_at = excluded.submitted_at
 	`, hashKey, now)
+	return err
+}
+
+// HasCheckedInToday checks if the user has a recorded check-in for the given date.
+func (s *Store) HasCheckedInToday(uid int64, dateStr string) bool {
+	if s == nil || s.db == nil || uid <= 0 {
+		return false
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(1) FROM checkins WHERE uid = ? AND checkin_date = ?", uid, dateStr).Scan(&count)
+	return err == nil && count > 0
+}
+
+// RecordCheckIn records a successful or confirmed check-in for the user on dateStr.
+func (s *Store) RecordCheckIn(uid int64, dateStr string) error {
+	if s == nil || s.db == nil || uid <= 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().Unix()
+	_, err := s.db.Exec(`
+		INSERT INTO checkins (uid, checkin_date, created_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(uid, checkin_date) DO UPDATE SET created_at = excluded.created_at
+	`, uid, dateStr, now)
 	return err
 }

@@ -115,3 +115,45 @@ func TestCacheHistoricalVsActivePage(t *testing.T) {
 		t.Errorf("expected historical page hit")
 	}
 }
+
+func TestCheckInCache(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "nga-cache-checkin-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	store, err := New(tempDir)
+	if err != nil {
+		t.Fatalf("failed to init cache store: %v", err)
+	}
+	defer store.Close()
+
+	uid := int64(123456)
+	date := "2026-11-08"
+
+	// Initially not checked in
+	if store.HasCheckedInToday(uid, date) {
+		t.Errorf("expected HasCheckedInToday to be false initially")
+	}
+
+	// Record checkin
+	if err := store.RecordCheckIn(uid, date); err != nil {
+		t.Fatalf("RecordCheckIn failed: %v", err)
+	}
+
+	// Now checked in
+	if !store.HasCheckedInToday(uid, date) {
+		t.Errorf("expected HasCheckedInToday to be true after record")
+	}
+
+	// Different date should still be false
+	if store.HasCheckedInToday(uid, "2026-11-09") {
+		t.Errorf("expected HasCheckedInToday to be false for tomorrow")
+	}
+
+	// Different uid should be false
+	if store.HasCheckedInToday(654321, date) {
+		t.Errorf("expected HasCheckedInToday to be false for different uid")
+	}
+}

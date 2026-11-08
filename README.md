@@ -17,6 +17,7 @@ NGA CLI 是一个专为终端开发者、Homelab 运维及论坛重度用户设�
 - **流式监听与退避抖动 (`tail -f`)**：支持持续监听帖子新回复，内置基准轮询间隔（默认 3s）、`±500ms` 随机抖动（Jitter）及无新楼层自动指数退避机制（最高退避至 10s），彻底避免在 CDN/WAF 形成机械周期特征。
 - **发帖回复与引用排版 (`reply` / `post`)**：支持向帖子发表回复与新发主题；提供 `--quote <floor>` 自动抓取指定楼层组装规范的 NGA `[quote]` BBCode；正文支持从 Markdown/文本文件直接导入。
 - **跨会话持久化防重机制**：基于 SQLite 本地记录内容签名，默认 30 秒内禁止重复提交相同内容，防止由于误触或连击被论坛防刷机制封禁；支持 `--force` 跳过。
+- **每日签到打卡 (`checkin`)**：支持一键完成 NGA 论坛每日打卡与金币领取；结合本地 SQLite 缓存自动持久化当日打卡状态，避免频繁网络请求造成风控；支持 `--force` 强制重签与 `--stat` 统计查询。
 - **多账号 Profile 凭证池**：支持通过 `nga profile` 管理多套登录凭证（Cookie UID/CID）、专属代理及 UA，支持全局 `--profile <name>` 随时切换身份。
 - **反风控与特征拟真**：默认配置标准移动端 User-Agent，直接规避 Web 端防爬 JS 挑战（`ERROR:15`）；内置请求限速（默认 1.5s）与阻断熔断保护。
 - **环境诊断与探测 (`doctor`)**：内置 DNS 解析检测、代理连通性探测以及 NGA 节点 WAF 绕过健康度诊断，协助 Homelab 网络调优。
@@ -170,6 +171,24 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ./nga post 441 -t "【测试】NGA CLI 终端发帖功能验证" -m "使用 Go 开发的轻量命令行客户端发布。"
 ```
 
+### 8. 每日签到与打卡 (`checkin`)
+```bash
+# 默认签到（自动使用当前默认 Profile 账号）
+./nga checkin
+
+# 强制重签（跳过本地当日已签到拦截，强制发起网络请求）
+./nga checkin --force
+
+# 指定账号 Profile 签到
+./nga checkin --profile homelab
+
+# 查询签到统计信息
+./nga checkin --stat
+
+# 结构化 JSON 输出
+./nga checkin --json
+```
+
 ---
 
 ## 最佳实践与 Agent Skill 规范
@@ -220,9 +239,9 @@ mkdir -p .agents/skills/nga-thread-monitor && curl -fsSL https://raw.githubuserc
 
 ```mermaid
 flowchart TD
-    Cmd[read / tail / reply / post] --> Profile[Profile 凭证与代理选择]
-    Profile --> DupCheck{30秒持久化防重检查?}
-    DupCheck -- 命中相同内容 & 无 --force --> Block[阻止重复提交]
+    Cmd[read / tail / reply / post / checkin] --> Profile[Profile 凭证与代理选择]
+    Profile --> DupCheck{防重或签到状态检查?}
+    DupCheck -- 命中相同内容或已签到 & 无 --force --> Block[阻止重复提交/拦截网络打卡]
     DupCheck -- 通过 / 读请求 --> CachePolicy{本地 SQLite 缓存检查}
     
     CachePolicy -- 命中已封存历史页 (Page < TotalPages) --> Hit[本地直读 0 流量 (<10ms)]
@@ -249,6 +268,7 @@ flowchart TD
 │   ├── tail.go        # 尾部直算与流式监听 (-f, --interval 等)
 │   ├── reply.go       # 回复帖子 (--quote, -m, -f, --force 等)
 │   ├── post.go        # 发新主题帖 (-t, -m, -f 等)
+│   ├── checkin.go     # 每日签到与打卡 (--force, --stat)
 │   ├── profile.go     # 多账号凭据管理 (list, use, set, remove)
 │   ├── doctor.go      # 网络与 WAF 连通性诊断
 │   ├── config.go      # 基础配置读写

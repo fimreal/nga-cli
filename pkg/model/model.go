@@ -46,3 +46,21 @@ type DoctorReport struct {
 	WAFChallenged  bool            `json:"waf_challenged"`
 	Message        string          `json:"message"`
 }
+
+// CheckInResult represents the outcome of a daily check-in action.
+type CheckInResult struct {
+	Success     bool   `json:"success"`
+	Message     string `json:"message"`
+	AlreadyDone bool   `json:"already_done,omitempty"`
+	UID         int64  `json:"uid,omitempty"`
+	Date        string `json:"date,omitempty"`
+	Timestamp   int64  `json:"timestamp,omitempty"`
+}
+
+// CheckInStat represents user check-in statistics.
+type CheckInStat struct {
+	Success bool   `json:"success"`
+	UID     int64  `json:"uid,omitempty"`
+	Message string `json:"message"`
+	Stat    string `json:"stat,omitempty"`
+}

@@ -462,6 +462,7 @@ func (c *Client) applyHeaders(req *http.Request) {
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
 	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("X-User-Agent", "Nga_Official")
 
 	if c.config.CookieUID > 0 && c.config.CookieCID != "" {
 		cookieStr := fmt.Sprintf("ngaPassportUid=%d; ngaPassportCid=%s", c.config.CookieUID, c.config.CookieCID)
@@ -716,4 +717,191 @@ func (c *Client) parsePostResponse(body []byte) (*PostResult, error) {
 	}
 
 	return nil, fmt.Errorf("发帖返回异常: %s", truncate(bodyText, 120))
+}
+
+// CheckIn performs daily check-in (每日签到) for the authenticated account.
+func (c *Client) CheckIn(ctx context.Context, force bool) (*model.CheckInResult, error) {
+	if c.config.CookieUID <= 0 || c.config.CookieCID == "" {
+		return nil, fmt.Errorf("签到未鉴权：未检测到有效 Cookie UID/CID，请使用 'nga profile set' 或 'nga config set' 配置凭据")
+	}
+
+	todayStr := time.Now().Format("2006-01-02")
+
+	// 1. Check local cache to avoid redundant network hits if already checked in today
+	if !force && !c.config.NoCache && c.cache != nil {
+		if c.cache.HasCheckedInToday(c.config.CookieUID, todayStr) {
+			return &model.CheckInResult{
+				Success:     true,
+				AlreadyDone: true,
+				UID:         c.config.CookieUID,
+				Date:        todayStr,
+				Timestamp:   time.Now().Unix(),
+				Message:     fmt.Sprintf("今日 (%s) 本地已记录签到状态，无需重复打卡。如需强制重签请携带 --force 参数", todayStr),
+			}, nil
+		}
+	}
+
+	// 2. Perform check-in POST request to nuke.php
+	reqURL := fmt.Sprintf("%s/nuke.php?__lib=check_in&__act=check_in&__output=8", c.config.BaseURL)
+	respBytes, err := c.doPostForm(ctx, reqURL, []byte{})
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := c.parseCheckInResponse(respBytes, todayStr)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. If check-in succeeded or was already done today on server, record in local cache
+	if (result.Success || result.AlreadyDone) && !c.config.NoCache && c.cache != nil {
+		_ = c.cache.RecordCheckIn(c.config.CookieUID, todayStr)
+	}
+
+	return result, nil
+}
+
+// GetCheckInStat queries user check-in statistics from NGA.
+func (c *Client) GetCheckInStat(ctx context.Context) (*model.CheckInStat, error) {
+	if c.config.CookieUID <= 0 || c.config.CookieCID == "" {
+		return nil, fmt.Errorf("查询签到状态未鉴权：未检测到有效 Cookie UID/CID，请使用 'nga profile set' 或 'nga config set' 配置凭据")
+	}
+
+	reqURL := fmt.Sprintf("%s/nuke.php?__lib=check_in&__act=get_stat&__output=8", c.config.BaseURL)
+	respBytes, err := c.doPostForm(ctx, reqURL, []byte{})
+	if err != nil {
+		return nil, err
+	}
+
+	return c.parseCheckInStatResponse(respBytes)
+}
+
+func (c *Client) parseCheckInResponse(body []byte, todayStr string) (*model.CheckInResult, error) {
+	var utf8Bytes []byte
+	if utf8.Valid(body) && (bytes.Contains(body, []byte("成功")) || bytes.Contains(body, []byte("error")) || bytes.Contains(body, []byte("data"))) {
+		utf8Bytes = body
+	} else if decoded, err := DecodeGBK(body); err == nil {
+		utf8Bytes = decoded
+	} else {
+		utf8Bytes = body
+	}
+	bodyText := string(utf8Bytes)
+
+	// Clean JSON boundaries
+	start := bytes.IndexByte(utf8Bytes, '{')
+	end := bytes.LastIndexByte(utf8Bytes, '}')
+	if start != -1 && end != -1 && end > start {
+		var raw map[string]interface{}
+		if err := json.Unmarshal(utf8Bytes[start:end+1], &raw); err == nil {
+			if errVal, ok := raw["error"]; ok && errVal != nil {
+				errStr := extractFirstString(errVal)
+				if strings.Contains(errStr, "先登录") || strings.Contains(errStr, "未登录") {
+					return nil, fmt.Errorf("签到未鉴权：Cookie UID/CID 已失效或未登录（%s）", errStr)
+				}
+				if strings.Contains(errStr, "已经签到") || strings.Contains(errStr, "今日已") || strings.Contains(errStr, "已签过") {
+					return &model.CheckInResult{
+						Success:     true,
+						AlreadyDone: true,
+						UID:         c.config.CookieUID,
+						Date:        todayStr,
+						Timestamp:   time.Now().Unix(),
+						Message:     errStr,
+					}, nil
+				}
+				return nil, fmt.Errorf("签到失败: %s", errStr)
+			}
+
+			if dataVal, ok := raw["data"]; ok && dataVal != nil {
+				msg := extractFirstString(dataVal)
+				if msg == "" {
+					msg = "签到成功"
+				}
+				return &model.CheckInResult{
+					Success:     true,
+					Message:     msg,
+					UID:         c.config.CookieUID,
+					Date:        todayStr,
+					Timestamp:   time.Now().Unix(),
+				}, nil
+			}
+		}
+	}
+
+	if strings.Contains(bodyText, "成功") {
+		return &model.CheckInResult{
+			Success:   true,
+			Message:   "签到成功",
+			UID:       c.config.CookieUID,
+			Date:      todayStr,
+			Timestamp: time.Now().Unix(),
+		}, nil
+	}
+
+	return nil, fmt.Errorf("签到响应异常: %s", truncate(bodyText, 120))
+}
+
+func (c *Client) parseCheckInStatResponse(body []byte) (*model.CheckInStat, error) {
+	var utf8Bytes []byte
+	if utf8.Valid(body) && (bytes.Contains(body, []byte("data")) || bytes.Contains(body, []byte("error"))) {
+		utf8Bytes = body
+	} else if decoded, err := DecodeGBK(body); err == nil {
+		utf8Bytes = decoded
+	} else {
+		utf8Bytes = body
+	}
+	bodyText := string(utf8Bytes)
+
+	start := bytes.IndexByte(utf8Bytes, '{')
+	end := bytes.LastIndexByte(utf8Bytes, '}')
+	if start != -1 && end != -1 && end > start {
+		var raw map[string]interface{}
+		if err := json.Unmarshal(utf8Bytes[start:end+1], &raw); err == nil {
+			if errVal, ok := raw["error"]; ok && errVal != nil {
+				errStr := extractFirstString(errVal)
+				return nil, fmt.Errorf("获取签到统计失败: %s", errStr)
+			}
+			if dataVal, ok := raw["data"]; ok && dataVal != nil {
+				var statStr string
+				if dataMap, ok := dataVal.(map[string]interface{}); ok {
+					if s0, ok := dataMap["0"]; ok {
+						statStr = fmt.Sprint(s0)
+					} else if b, err := json.Marshal(dataMap); err == nil {
+						statStr = string(b)
+					}
+				} else {
+					statStr = extractFirstString(dataVal)
+				}
+				return &model.CheckInStat{
+					Success: true,
+					UID:     c.config.CookieUID,
+					Message: "获取签到状态成功",
+					Stat:    statStr,
+				}, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("获取签到状态返回异常: %s", truncate(bodyText, 120))
+}
+
+func extractFirstString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return val
+	case []interface{}:
+		if len(val) > 0 {
+			return fmt.Sprint(val[0])
+		}
+	case map[string]interface{}:
+		if s, ok := val["0"]; ok {
+			return fmt.Sprint(s)
+		}
+		for _, item := range val {
+			return fmt.Sprint(item)
+		}
+	}
+	return fmt.Sprint(v)
 }
