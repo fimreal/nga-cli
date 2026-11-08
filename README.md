@@ -7,10 +7,6 @@
 
 NGA CLI 是一个专为终端开发者、Homelab 运维及论坛重度用户设计的轻量、极简流量、防风控的 NGA 命令行客户端。
 
-> **仓库主页**：
-> - **GitHub（公开开源主页）**：[https://github.com/fimreal/nga-cli](https://github.com/fimreal/nga-cli)
-> - **Gitea（内网镜像）**：[https://git.epurs.com/fimreal/nga-cli](https://git.epurs.com/fimreal/nga-cli)
-
 ---
 
 ## 核心特性
