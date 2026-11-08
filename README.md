@@ -176,6 +176,13 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 
 ---
 
+## 最佳实践与 Agent Skill 规范
+
+针对 10万+ 楼超大体量帖子极速直算、最小流量优化、特定人员/楼主过滤、防风控流式监听以及下游自动化管道集成，详见专属规范文档（支持作为 AI Agent Skill 原生安装）：
+- [NGA 帖子监控与特定用户回复追踪最佳实践与规范 (Skill)](docs/skills/nga-thread-monitor/SKILL.md)
+
+---
+
 ## 缓存与防风控机制设计
 
 ```mermaid
@@ -222,6 +229,8 @@ flowchart TD
 │   └── filter/        # UID 黑白名单与楼主过滤器
 ├── pkg/
 │   └── model/         # Thread, Post, DoctorReport 等领域模型
+├── docs/
+│   └── skills/        # Agent Skill 规范与最佳实践指南
 ├── Dockerfile         # 极简多阶段构建 Alpine 镜像
 ├── docker-compose.yml # 容器化部署模版
 ├── main.go            # 命令行入口
