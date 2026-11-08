@@ -1,6 +1,6 @@
 # NGA CLI (艾泽拉斯国家地理论坛命令行工具)
 
-[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![SQLite](https://img.shields.io/badge/SQLite-PureGo-003B57?style=flat&logo=sqlite)](https://modernc.org/sqlite)
 [![GitHub Release](https://img.shields.io/github/v/release/fimreal/nga-cli?style=flat&logo=github)](https://github.com/fimreal/nga-cli/releases)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
