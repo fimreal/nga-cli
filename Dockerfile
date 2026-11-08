@@ -1,5 +1,5 @@
 # 多阶段构建轻量化容器镜像
-FROM golang:1.23-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
