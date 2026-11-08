@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  nga-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nga-cli:latest
+    container_name: nga-cli
+    volumes:
+      # 挂载本地配置与 SQLite 缓存文件
+      - ./data:/root/.config/nga-cli
+    environment:
+      - TZ=Asia/Shanghai
+      # 可选：Homelab 局域网代理配置
+      # - HTTP_PROXY=http://192.168.1.100:7890
+      # - HTTPS_PROXY=http://192.168.1.100:7890
+    command: ["doctor"]
