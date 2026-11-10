@@ -95,8 +95,9 @@ func initConfig() {
 	_ = viper.ReadInConfig()
 }
 
-// getClient creates an initialized client using configuration flags and environment.
-func getClient() (*client.Client, error) {
+// resolveProxyURL returns the effective proxy for outbound requests, with
+// explicit configuration taking precedence over ambient environment variables.
+func resolveProxyURL() string {
 	proxy := viper.GetString("proxy")
 	if proxy == "" {
 		proxy = os.Getenv("ALL_PROXY")
@@ -107,6 +108,12 @@ func getClient() (*client.Client, error) {
 	if proxy == "" {
 		proxy = os.Getenv("HTTP_PROXY")
 	}
+	return proxy
+}
+
+// getClient creates an initialized client using configuration flags and environment.
+func getClient() (*client.Client, error) {
+	proxy := resolveProxyURL()
 
 	uid := viper.GetInt64("cookie_uid")
 	if uid == 0 && os.Getenv("NGA_UID") != "" {

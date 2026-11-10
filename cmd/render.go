@@ -91,3 +91,51 @@ func PrintDoctorReport(report *model.DoctorReport) {
 	fmt.Printf("诊断结论: %s\n", report.Message)
 	fmt.Println(divider)
 }
+
+// PrintUpgradeResult renders a self-update check or installation as a card.
+func PrintUpgradeResult(res *model.UpgradeResult) {
+	divider := strings.Repeat("=", 80)
+	fmt.Println(divider)
+	if res.Applied {
+		fmt.Println("✅ NGA CLI 自更新完成")
+	} else if res.UpdateAvailable {
+		fmt.Println("⬆️  NGA CLI 发现可用更新")
+	} else {
+		fmt.Println("ℹ️  NGA CLI 版本检查")
+	}
+	fmt.Printf("当前版本: %s\n", res.CurrentVersion)
+	fmt.Printf("目标版本: %s\n", res.TargetVersion)
+	if res.ReleaseName != "" {
+		fmt.Printf("发布名称: %s\n", res.ReleaseName)
+	}
+	if res.PublishedAt != "" {
+		fmt.Printf("发布时间: %s\n", res.PublishedAt)
+	}
+	if res.AssetName != "" {
+		fmt.Printf("平台资产: %s (%s)\n", res.AssetName, humanBytes(res.AssetSize))
+	}
+	if res.TargetPath != "" {
+		fmt.Printf("目标路径: %s\n", res.TargetPath)
+	}
+	if res.ChecksumVerified {
+		fmt.Printf("完整性  : SHA256 %s (已校验)\n", res.Checksum)
+	}
+	fmt.Printf("结果: %s\n", res.Message)
+	if res.ReleaseURL != "" {
+		fmt.Printf("发行页: %s\n", res.ReleaseURL)
+	}
+	fmt.Println(divider)
+}
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
