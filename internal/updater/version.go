@@ -22,7 +22,10 @@ func parseVersion(s string) version {
 	s = strings.TrimPrefix(s, "v")
 	s = strings.TrimPrefix(s, "V")
 
-	// Build stamps such as "0.2.0-12-gabcdef" or "v0.2.0+dirty" stay unknown.
+	// Semver build metadata ("+dirty") carries no precedence and is dropped.
+	// A hyphenated suffix ("0.2.0-rc1", "0.2.0-12-gabcdef") is kept as pre and
+	// only orders it before its stable core. Anything whose remaining segments
+	// are not numeric ("dev", "main") stays unknown.
 	if i := strings.IndexAny(s, "+"); i >= 0 {
 		s = s[:i]
 	}

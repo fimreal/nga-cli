@@ -1,6 +1,6 @@
 ---
 name: nga-cli
-description: "Use when interacting with NGA (National Geographic Azeroth) forum using the nga CLI tool: checking network/WAF health, reading threads, streaming updates (tail -f), posting threads or replies with quote BBCode, managing profiles/cookies/proxies, managing profiles/cookies/proxies, self-updating the CLI from GitHub Releases, or querying CLI help to discover newly added commands."
+description: "Use when interacting with NGA (National Geographic Azeroth) forum using the nga CLI tool: checking network/WAF health, reading threads, streaming updates (tail -f), posting threads or replies with quote BBCode, managing profiles/cookies/proxies, self-updating the CLI from GitHub Releases, or querying CLI help to discover newly added commands."
 user-invocable: true
 allowed-tools: Bash(nga *), Bash(jq *)
 ---
@@ -185,7 +185,7 @@ nga config set rate_limit 2000
 ```
 
 #### 8. 客户端自更新 (`upgrade`)
-从 GitHub Release 检测新版本并完成自更新，Agent 可安全用于版本保鲜巡检：
+从 GitHub Release 检测新版本并完成自更新，Agent 可安全用于版本更新可用性检查：
 ```bash
 # 仅检测是否存在新版本 (不下载、不替换二进制)
 nga upgrade --check --json
