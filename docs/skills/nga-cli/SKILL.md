@@ -1,6 +1,6 @@
 ---
 name: nga-cli
-description: "Use when interacting with NGA (National Geographic Azeroth) forum using the nga CLI tool: checking network/WAF health, reading threads, streaming updates (tail -f), posting threads or replies with quote BBCode, managing profiles/cookies/proxies, or querying CLI help to discover newly added commands."
+description: "Use when interacting with NGA (National Geographic Azeroth) forum using the nga CLI tool: checking network/WAF health, reading threads, streaming updates (tail -f), posting threads or replies with quote BBCode, managing profiles/cookies/proxies, managing profiles/cookies/proxies, self-updating the CLI from GitHub Releases, or querying CLI help to discover newly added commands."
 user-invocable: true
 allowed-tools: Bash(nga *), Bash(jq *)
 ---
@@ -52,6 +52,7 @@ flowchart TD
    nga post --help
    nga profile --help
    nga doctor --help
+   nga upgrade --help
    ```
 3. **结构化 JSON 优先原则**：
    - 在任何 Agent 驱动或自动化管道中，**优先追加全局 `--json` 参数**。
@@ -183,6 +184,29 @@ nga config set proxy "http://127.0.0.1:7890"
 nga config set rate_limit 2000
 ```
 
+#### 8. 客户端自更新 (`upgrade`)
+从 GitHub Release 检测新版本并完成自更新，Agent 可安全用于版本保鲜巡检：
+```bash
+# 仅检测是否存在新版本 (不下载、不替换二进制)
+nga upgrade --check --json
+
+# 执行自更新 (下载当前平台资产 -> SHA256 校验 -> 原子替换)
+nga upgrade --json
+
+# 安装指定历史版本 / 降级 (需显式 --force)
+nga upgrade --version v0.1.0 --force --json
+
+# 镜像站、GitHub Enterprise 或自定义仓库
+nga upgrade --repo owner/nga-cli --api-base https://gitea.example.com/api/v1 --json
+```
+- **核心返回字段**：
+  - `update_available`: 是否存在可比当前版本更新的 Release；
+  - `applied`: 本次是否已完成二进制替换（`--check` 恒为 `false`）；
+  - `asset_name` / `asset_size`: 命中当前系统架构的预编译资产及其下载字节数；
+  - `checksum` + `checksum_verified`: SHA256 摘要与校验结论（缺失 `checksums.txt` 时校验失败并中止，除非追加 `--no-checksum`）；
+  - `target_path`: 被替换的二进制绝对路径。
+- **Agent 调度建议**：巡检只使用 `--check`；`applied == true` 后需重新读取 `nga --version` 再继续调度，因为磁盘上的二进制已被替换为新的可执行文件。
+
 ---
 
 ## 3. Agent 管道集成最佳实践
@@ -219,10 +243,14 @@ nga reply 47288722 -m "自动打卡" --json | jq -r '.message'
 | `ERROR:15` | WAF 识别出非标准客户端 | 检查是否传递了自定义桌面端 `--user-agent`；去掉自定义 UA，使用 CLI 默认内置移动端 UA。 |
 | `HTTP 403 / 503` | 触发 IP 访问频控 | 检查 `doctor` 诊断；在命令中挂载 `--rate-limit 3000` 或配置代理 `--proxy`。 |
 | `duplicate submission prevented` | 触发本地 30 秒相同内容防刷保护 | 如确实需要重复发送相同内容，追加 `--force` 参数绕过本地防重。 |
+| `GitHub API 限流 (HTTP 403 / 429)` | Release 检测接口匿名调用配额耗尽 | 配置 `GITHUB_TOKEN` 环境变量，或挂载 `--proxy` 更换出口 IP 后重试。 |
+| `未包含当前平台 (os/arch) 的资产` | 该 Release 未构建目标平台产物 | 从报错列出的可用资产中挑选匹配项，或降级到最近一个包含该平台产物的版本 `--version <tag> --force`。 |
+| `SHA256 校验失败` | 下载内容被截断或遭中间人篡改 | 二进制保持原样未替换；重试 `nga upgrade`，持续失败时向仓库维护者报告。 |
 | `cookie credentials required` | 访问受限板块或发帖需要登录 | 检查 `nga profile list`，若无凭证提醒用户配置 UID 与 CID。 |
 
 ---
 
 ## 5. 规范版本记录
 
+- **v1.1.0 (2026-11-10)**：新增 `upgrade` 自更新命令说明（GitHub Release 检测、SHA256 校验、原子替换与 Agent 巡检建议）。
 - **v1.0.0 (2026-11-08)**：初始发布通用命令用法规范，确立动态自省机制、全局参数矩阵、子命令最佳实践与 Agent 保鲜度契约。

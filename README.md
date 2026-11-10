@@ -17,6 +17,7 @@ NGA CLI 是一个专为终端开发者、Homelab 运维及论坛重度用户设�
 - **流式监听与退避抖动 (`tail -f`)**：支持持续监听帖子新回复，内置基准轮询间隔（默认 3s）、`±500ms` 随机抖动（Jitter）及无新楼层自动指数退避机制（最高退避至 10s），彻底避免在 CDN/WAF 形成机械周期特征。
 - **发帖回复与引用排版 (`reply` / `post`)**：支持向帖子发表回复与新发主题；提供 `--quote <floor>` 自动抓取指定楼层组装规范的 NGA `[quote]` BBCode；正文支持从 Markdown/文本文件直接导入。
 - **跨会话持久化防重机制**：基于 SQLite 本地记录内容签名，默认 30 秒内禁止重复提交相同内容，防止由于误触或连击被论坛防刷机制封禁；支持 `--force` 跳过。
+- **客户端自更新 (`upgrade`)**：从 GitHub Release 检测最新版本，下载当前平台预编译资产，按 `checksums.txt` 校验 SHA256 后原子替换自身二进制；支持 `--check` 巡检、指定版本安装与降级重装。
 - **每日签到打卡 (`checkin`)**：支持一键完成 NGA 论坛每日打卡与金币领取；结合本地 SQLite 缓存自动持久化当日打卡状态，避免频繁网络请求造成风控；支持 `--force` 强制重签与 `--stat` 统计查询。
 - **多账号 Profile 凭证池**：支持通过 `nga profile` 管理多套登录凭证（Cookie UID/CID）、专属代理及 UA，支持全局 `--profile <name>` 随时切换身份。
 - **反风控与特征拟真**：默认配置标准移动端 User-Agent，直接规避 Web 端防爬 JS 挑战（`ERROR:15`）；内置请求限速（默认 1.5s）与阻断熔断保护。
@@ -71,7 +72,36 @@ sha256sum -c checksums.txt
 
 ---
 
-### 2. 源码构建 (开发者模式)
+### 2. 自更新 (推荐日常升级方式)
+
+安装首个二进制后，后续升级无需再手动下载：
+
+```bash
+# 仅检测是否存在新版本（不下载、不替换）
+nga upgrade --check
+
+# 检测 + 下载 + SHA256 校验 + 原子替换自身
+nga upgrade
+
+# 安装指定历史版本；版本相同或需要降级时追加 --force
+nga upgrade --version v0.1.0 --force
+
+# 改用镜像站 / GitHub Enterprise 的 API 根地址
+nga upgrade --api-base https://gitea.example.com/api/v1
+
+# 机器可读输出（适合 Agent 与自动化巡检）
+nga upgrade --json
+```
+
+安全与可靠性说明：
+
+- **完整性校验**：替换前按 Release 附带的 `checksums.txt` 校验下载包 SHA256；不匹配则中止并保持原二进制不变，仅在明确信任来源时可用 `--no-checksum` 跳过。
+- **原子替换**：新版本先写入目标目录下的临时文件，校验与解压通过后 `rename` 覆盖；下载或解压失败不会破坏现有安装。
+- **权限不足**：`/usr/local/bin` 等只读位置需 `sudo nga upgrade`；Windows 下若二进制被占用，请先关闭其他 `nga` 实例。
+- **API 限流**：匿名调用 GitHub Release API 受速率限制影响，可配置 `GITHUB_TOKEN` 环境变量提升配额（凭证仅通过环境变量传入，不会写入配置或日志）。
+- **无外部依赖**：自更新逻辑完全基于 Go 标准库实现，未引入第三方更新框架。
+
+### 3. 源码构建 (开发者模式)
 ```bash
 # 本地编译生成可执行二进制
 go build -o nga .
@@ -80,7 +110,7 @@ go build -o nga .
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ```
 
-### 3. 多账号 Profile 管理 (`profile`)
+### 4. 多账号 Profile 管理 (`profile`)
 ```bash
 # 查看所有已配置的账号 Profile
 ./nga profile list
@@ -98,7 +128,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ./nga profile remove alt
 ```
 
-### 4. 网络与风控健康度诊断 (`doctor`)
+### 5. 网络与风控健康度诊断 (`doctor`)
 在首次使用或配置代理后，运行诊断检查网络与 WAF 状态：
 ```bash
 # 标准终端格式
@@ -111,7 +141,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ./nga doctor --proxy socks5://127.0.0.1:7890
 ```
 
-### 5. 读取帖子与缓存控制 (`read`)
+### 6. 读取帖子与缓存控制 (`read`)
 ```bash
 # 读取指定帖子第 1 页 (自动使用本地 SQLite 缓存，二次读取 < 10ms)
 ./nga read 38888888
@@ -135,7 +165,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ./nga read 38888888 --json | jq '.posts[0]'
 ```
 
-### 6. 尾部查看与流式实时监听 (`tail` / `tail -f`)
+### 7. 尾部查看与流式实时监听 (`tail` / `tail -f`)
 ```bash
 # 查看最后 10 楼 (默认)
 ./nga tail 38888888
@@ -153,7 +183,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ./nga tail 38888888 -f --author
 ```
 
-### 7. 发帖与回复 (`reply` / `post`)
+### 8. 发帖与回复 (`reply` / `post`)
 ```bash
 # 直接回复帖子
 ./nga reply 38888888 -m "感谢楼主分享，已收藏！"
@@ -171,7 +201,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nga main.go
 ./nga post 441 -t "【测试】NGA CLI 终端发帖功能验证" -m "使用 Go 开发的轻量命令行客户端发布。"
 ```
 
-### 8. 每日签到与打卡 (`checkin`)
+### 9. 每日签到与打卡 (`checkin`)
 ```bash
 # 默认签到（自动使用当前默认 Profile 账号）
 ./nga checkin
@@ -240,6 +270,10 @@ mkdir -p .agents/skills/nga-thread-monitor && curl -fsSL https://raw.githubuserc
 ```mermaid
 flowchart TD
     Cmd[read / tail / reply / post / checkin] --> Profile[Profile 凭证与代理选择]
+    Upgrade[upgrade] --> ReleaseAPI[GitHub Release API]
+    ReleaseAPI --> SumCheck{checksums.txt SHA256 校验}
+    SumCheck -- 通过 --> Swap[临时文件落盘后原子替换自身]
+    SumCheck -- 失败 --> Abort[中止并保持原二进制]
     Profile --> DupCheck{防重或签到状态检查?}
     DupCheck -- 命中相同内容或已签到 & 无 --force --> Block[阻止重复提交/拦截网络打卡]
     DupCheck -- 通过 / 读请求 --> CachePolicy{本地 SQLite 缓存检查}
@@ -269,6 +303,7 @@ flowchart TD
 │   ├── reply.go       # 回复帖子 (--quote, -m, -f, --force 等)
 │   ├── post.go        # 发新主题帖 (-t, -m, -f 等)
 │   ├── checkin.go     # 每日签到与打卡 (--force, --stat)
+│   ├── upgrade.go     # 客户端自更新 (GitHub Release 检测与安装)
 │   ├── profile.go     # 多账号凭据管理 (list, use, set, remove)
 │   ├── doctor.go      # 网络与 WAF 连通性诊断
 │   ├── config.go      # 基础配置读写
@@ -278,6 +313,7 @@ flowchart TD
 │   ├── cache/         # SQLite 本地增量缓存与发帖防重驱动 (Pure-Go 无 CGO)
 │   ├── profile/       # Profile 多账号配置管理器
 │   ├── parser/        # lite=js 清洗器, 控制字符修复, BBCode 转换
+│   ├── updater/       # Release 检测、SHA256 校验、归档解压与二进制原子替换
 │   ├── limiter/       # 令牌桶限流与随机抖动 Jitter
 │   └── filter/        # UID 黑白名单与楼主过滤器
 ├── pkg/
