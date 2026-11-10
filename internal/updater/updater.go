@@ -25,12 +25,12 @@ const (
 	// DefaultRepo is the GitHub repository publishing release assets.
 	DefaultRepo = "fimreal/nga-cli"
 	// DefaultAPIBase is the GitHub REST API root.
-	DefaultAPIBase   = "https://api.github.com"
-	checksumAsset    = "checksums.txt"
-	binaryBase       = "nga"
-	defaultTimeout   = 60 * time.Second
-	downloadTimeout  = 10 * time.Minute
-	jsonAcceptHeader = "application/vnd.github+json"
+	DefaultAPIBase    = "https://api.github.com"
+	checksumAsset     = "checksums.txt"
+	binaryBase        = "nga"
+	defaultAPITimeout = 60 * time.Second
+	downloadTimeout   = 10 * time.Minute
+	jsonAcceptHeader  = "application/vnd.github+json"
 )
 
 // Asset is a release attachment as reported by the GitHub Release API.
@@ -55,11 +55,13 @@ type Release struct {
 
 // Config describes where to look for updates and what to update.
 type Config struct {
-	Repo       string
-	APIBase    string
-	ProxyURL   string
-	Token      string
-	UserAgent  string
+	Repo      string
+	APIBase   string
+	ProxyURL  string
+	Token     string
+	UserAgent string
+	// Timeout bounds a single release-API request. Asset downloads are not
+	// covered by it; they use their own, longer deadline.
 	Timeout    time.Duration
 	GOOS       string
 	GOARCH     string
@@ -104,7 +106,7 @@ func New(cfg Config) *Updater {
 		cfg.GOARCH = runtime.GOARCH
 	}
 	if cfg.Timeout <= 0 {
-		cfg.Timeout = defaultTimeout
+		cfg.Timeout = defaultAPITimeout
 	}
 	if cfg.UserAgent == "" {
 		cfg.UserAgent = "nga-cli-updater"
@@ -129,7 +131,10 @@ func New(cfg Config) *Updater {
 				transport.Proxy = http.ProxyURL(pURL)
 			}
 		}
-		client = &http.Client{Transport: transport, Timeout: cfg.Timeout}
+		// No Client.Timeout: it also caps time spent reading resp.Body, which
+		// would cut off multi-megabyte asset transfers. Every request carries
+		// its own context deadline instead.
+		client = &http.Client{Transport: transport}
 	}
 
 	return &Updater{
@@ -177,7 +182,10 @@ func (u *Updater) ReleaseFor(ctx context.Context, tag string) (*Release, error) 
 }
 
 func (u *Updater) fetchRelease(ctx context.Context, endpoint string) (*Release, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	actx, cancel := context.WithTimeout(ctx, u.cfg.Timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(actx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +411,7 @@ func (u *Updater) download(ctx context.Context, rawURL, dst string) (int64, erro
 		return 0, err
 	}
 	req.Header.Set("User-Agent", u.cfg.UserAgent)
-	if u.cfg.Token != "" && strings.Contains(req.URL.Host, "api.github.com") {
+	if u.cfg.Token != "" && req.URL.Hostname() == "api.github.com" {
 		req.Header.Set("Authorization", "Bearer "+u.cfg.Token)
 	}
 
@@ -430,19 +438,21 @@ func (u *Updater) download(ctx context.Context, rawURL, dst string) (int64, erro
 	return n, nil
 }
 
-// targetPath resolves the binary to replace, following symlinks.
+// targetPath resolves the binary to replace, following symlinks so that an
+// installation is replaced instead of a link that merely points at it.
 func (u *Updater) targetPath() string {
-	if u.cfg.TargetPath != "" {
-		return u.cfg.TargetPath
+	path := u.cfg.TargetPath
+	if path == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return ""
+		}
+		path = exe
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		return resolved
 	}
-	return exe
+	return path
 }
 
 // replaceBinary swaps the new binary into place atomically where possible.
@@ -482,8 +492,9 @@ func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
-	if len(s) > 200 {
-		s = s[:200]
+	// Truncate by rune so multi-byte error text is never cut mid-character.
+	if r := []rune(s); len(r) > 200 {
+		s = string(r[:200]) + "…"
 	}
 	return s
 }

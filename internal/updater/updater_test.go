@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 const installedBinary = "brand-new-nga-binary"
@@ -280,8 +282,12 @@ func TestUpgradeApplyReplacesBinary(t *testing.T) {
 	if res.AssetSize != int64(len(fx.archive)) {
 		t.Errorf("asset_size = %d, want %d", res.AssetSize, len(fx.archive))
 	}
-	if res.TargetPath != target {
-		t.Errorf("target_path = %q, want %q", res.TargetPath, target)
+	wantTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.TargetPath != wantTarget {
+		t.Errorf("target_path = %q, want %q", res.TargetPath, wantTarget)
 	}
 
 	got, err := os.ReadFile(target)
@@ -489,5 +495,146 @@ func TestReplaceBinaryOverwritesInPlace(t *testing.T) {
 func TestTargetPathFallsBackToRunningExecutable(t *testing.T) {
 	if got := New(Config{}).targetPath(); got == "" {
 		t.Skip("os.Executable is unavailable in this harness")
+	}
+}
+
+// --- review regression tests ------------------------------------------
+
+func clearProxyEnv(t *testing.T) {
+	t.Helper()
+
+	// The default transport honours ProxyFromEnvironment, which would route
+	// httptest traffic through a real proxy when one is configured.
+	t.Setenv("HTTP_PROXY", "")
+	t.Setenv("HTTPS_PROXY", "")
+	t.Setenv("ALL_PROXY", "")
+	t.Setenv("NO_PROXY", "127.0.0.1,localhost")
+}
+
+func delayed(handler http.HandlerFunc, d time.Duration) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(d):
+		case <-r.Context().Done():
+			return
+		}
+		handler(w, r)
+	}
+}
+
+// A slow asset transfer must not be cut short by the release-API deadline.
+func TestSlowDownloadIsNotCappedByAPITimeout(t *testing.T) {
+	clearProxyEnv(t)
+
+	tag := "v0.9.0"
+	platform := "linux-amd64.tar.gz"
+	assetName := "nga_" + tag + "_" + platform
+	archive := tarGzWithBinary(t, "nga", []byte(installedBinary))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/fimreal/nga-cli/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, releasePayload("http://"+r.Host, tag, assetName, false))
+	})
+	// Headers go out first, then the body trickles in: exactly the case a
+	// global Client.Timeout kills mid-transfer.
+	mux.HandleFunc("/files/"+assetName, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(archive)))
+		w.WriteHeader(http.StatusOK)
+		mid := len(archive) / 2
+		if _, err := w.Write(archive[:mid]); err != nil {
+			return
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-time.After(120 * time.Millisecond):
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = w.Write(archive[mid:])
+	})
+	mux.HandleFunc("/files/checksums.txt", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s  %s\n", digestOf(archive), assetName)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	target := newTestBinary(t, "nga")
+	u := New(Config{
+		APIBase:    srv.URL,
+		GOOS:       "linux",
+		GOARCH:     "amd64",
+		TargetPath: target,
+		Timeout:    30 * time.Millisecond,
+	})
+
+	res, err := u.Upgrade(context.Background(), "v0.1.0", Options{Apply: true, Verify: true})
+	if err != nil {
+		t.Fatalf("download exceeded the release-API deadline: %v", err)
+	}
+	if !res.Applied || !res.ChecksumVerified {
+		t.Errorf("unexpected result: %+v", res)
+	}
+
+	// The deadline still bounds the release-API request itself.
+	mux2 := http.NewServeMux()
+	mux2.HandleFunc("/repos/fimreal/nga-cli/releases/latest", delayed(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, releasePayload("http://"+r.Host, tag, assetName, false))
+	}, 300*time.Millisecond))
+	srv2 := httptest.NewServer(mux2)
+	defer srv2.Close()
+
+	u2 := New(Config{APIBase: srv2.URL, TargetPath: target, Timeout: 30 * time.Millisecond})
+	if _, err := u2.Upgrade(context.Background(), "v0.1.0", Options{Apply: false}); err == nil {
+		t.Fatal("expected the release-API deadline to abort a stalled metadata request")
+	} else if !strings.Contains(err.Error(), "deadline") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestNewBuildsClientWithoutGlobalTimeout(t *testing.T) {
+	if got := New(Config{}).client.Timeout; got != 0 {
+		t.Errorf("client.Timeout = %v, want 0 so streamed downloads are context-bounded only", got)
+	}
+}
+
+func TestTargetPathResolvesConfiguredSymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "nga")
+	if err := os.WriteFile(real, []byte("binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "nga-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+
+	// Replacing through the link must target the installation, not the link.
+	got := New(Config{TargetPath: link}).targetPath()
+	if want, err := filepath.EvalSymlinks(real); err == nil {
+		if got != want {
+			t.Errorf("targetPath() = %q, want %q", got, want)
+		}
+	} else {
+		t.Fatal(err)
+	}
+}
+
+func TestFirstLineTruncatesOnRuneBoundary(t *testing.T) {
+	long := strings.Repeat("校验失败", 100) + "\nignored"
+	got := firstLine(long)
+	if !utf8.ValidString(got) {
+		t.Errorf("truncated text is not valid UTF-8: %q", got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("expected an ellipsis marker, got %q", got)
+	}
+	if len([]rune(got)) != 201 {
+		t.Errorf("rune count = %d, want 201 (200 + ellipsis)", len([]rune(got)))
+	}
+
+	if short := firstLine("  错误信息\nrest"); short != "错误信息" {
+		t.Errorf("firstLine = %q", short)
 	}
 }
