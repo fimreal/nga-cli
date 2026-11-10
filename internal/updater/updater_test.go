@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,11 +117,16 @@ func TestReleaseJSONParsing(t *testing.T) {
 // --- end-to-end upgrade tests -------------------------------------------
 
 type fixtureOpts struct {
-	tag             string
-	platform        string // e.g. "linux-amd64.tar.gz", "windows-amd64.zip"
-	entryName       string
-	badChecksum     bool
-	noChecksumAsset bool
+	tag                  string
+	platform             string // e.g. "linux-amd64.tar.gz", "windows-amd64.zip"
+	entryName            string
+	badChecksum          bool
+	noChecksumAsset      bool
+	missingAssetChecksum bool
+	corruptArchive       bool
+	missingArchiveEntry  bool
+	downloadStatus       int
+	checksumStatus       int
 }
 
 // releaseFixture serves a GitHub-shaped release channel: one platform archive
@@ -136,9 +142,14 @@ func newReleaseFixture(t *testing.T, o fixtureOpts) *releaseFixture {
 	t.Helper()
 
 	fx := &releaseFixture{assetName: "nga_" + o.tag + "_" + o.platform}
-	if strings.HasSuffix(o.platform, ".zip") {
+	switch {
+	case o.corruptArchive:
+		fx.archive = []byte("corrupted-not-an-archive")
+	case o.missingArchiveEntry:
+		fx.archive = tarGzWithBinary(t, "unrelated_file.txt", []byte("hello"))
+	case strings.HasSuffix(o.platform, ".zip"):
 		fx.archive = zipWithBinary(t, o.entryName, []byte(installedBinary))
-	} else {
+	default:
 		fx.archive = tarGzWithBinary(t, o.entryName, []byte(installedBinary))
 	}
 
@@ -146,6 +157,8 @@ func newReleaseFixture(t *testing.T, o fixtureOpts) *releaseFixture {
 	sums := fmt.Sprintf("%s  %s\n", fx.digest, fx.assetName)
 	if o.badChecksum {
 		sums = fmt.Sprintf("%s  %s\n", strings.Repeat("f", 64), fx.assetName)
+	} else if o.missingAssetChecksum {
+		sums = fmt.Sprintf("%s  %s\n", fx.digest, "nga_other_platform.tar.gz")
 	}
 
 	mux := http.NewServeMux()
@@ -163,9 +176,17 @@ func newReleaseFixture(t *testing.T, o fixtureOpts) *releaseFixture {
 	mux.HandleFunc("/repos/fimreal/nga-cli/releases/latest", releaseHandler)
 	mux.HandleFunc("/repos/fimreal/nga-cli/releases/tags/", releaseHandler)
 	mux.HandleFunc("/files/"+fx.assetName, func(w http.ResponseWriter, r *http.Request) {
+		if o.downloadStatus != 0 {
+			http.Error(w, "download error", o.downloadStatus)
+			return
+		}
 		_, _ = w.Write(fx.archive)
 	})
 	mux.HandleFunc("/files/checksums.txt", func(w http.ResponseWriter, r *http.Request) {
+		if o.checksumStatus != 0 {
+			http.Error(w, "checksum error", o.checksumStatus)
+			return
+		}
 		fmt.Fprint(w, sums)
 	})
 
@@ -349,6 +370,10 @@ func TestUpgradeMissingChecksumsAborts(t *testing.T) {
 	if _, err := u.Upgrade(context.Background(), "v0.1.0", Options{Apply: true, Verify: true}); err == nil {
 		t.Fatal("expected a missing checksums.txt to abort the upgrade")
 	}
+	gotBefore, _ := os.ReadFile(target)
+	if string(gotBefore) != "old-binary" {
+		t.Errorf("binary must stay untouched when checksums.txt is missing, got %q", gotBefore)
+	}
 
 	// With verification explicitly opted out, the same release installs fine.
 	res, err := u.Upgrade(context.Background(), "v0.1.0", Options{Apply: true, Verify: false})
@@ -489,5 +514,200 @@ func TestReplaceBinaryOverwritesInPlace(t *testing.T) {
 func TestTargetPathFallsBackToRunningExecutable(t *testing.T) {
 	if got := New(Config{}).targetPath(); got == "" {
 		t.Skip("os.Executable is unavailable in this harness")
+	}
+}
+
+func TestUpgradeDownloadFailureKeepsBinary(t *testing.T) {
+	fx := newReleaseFixture(t, fixtureOpts{
+		tag:            "v0.9.0",
+		platform:       "linux-amd64.tar.gz",
+		entryName:      "nga",
+		downloadStatus: http.StatusInternalServerError,
+	})
+	target := newTestBinary(t, "nga")
+
+	_, err := fx.updater(target, "linux", "amd64").
+		Upgrade(context.Background(), "v0.1.0", Options{Apply: true, Verify: true})
+	if err == nil {
+		t.Fatal("expected download failure error, got nil")
+	}
+	if !strings.Contains(err.Error(), "HTTP 500") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old-binary" {
+		t.Errorf("binary content must stay untouched on download error, got %q", got)
+	}
+}
+
+func TestUpgradeChecksumFetchFailureKeepsBinary(t *testing.T) {
+	fx := newReleaseFixture(t, fixtureOpts{
+		tag:            "v0.9.0",
+		platform:       "linux-amd64.tar.gz",
+		entryName:      "nga",
+		checksumStatus: http.StatusInternalServerError,
+	})
+	target := newTestBinary(t, "nga")
+
+	_, err := fx.updater(target, "linux", "amd64").
+		Upgrade(context.Background(), "v0.1.0", Options{Apply: true, Verify: true})
+	if err == nil {
+		t.Fatal("expected checksums.txt fetch error, got nil")
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old-binary" {
+		t.Errorf("binary content must stay untouched on checksum fetch failure, got %q", got)
+	}
+}
+
+func TestUpgradeChecksumMissingAssetKeepsBinary(t *testing.T) {
+	fx := newReleaseFixture(t, fixtureOpts{
+		tag:                  "v0.9.0",
+		platform:             "linux-amd64.tar.gz",
+		entryName:            "nga",
+		missingAssetChecksum: true,
+	})
+	target := newTestBinary(t, "nga")
+
+	_, err := fx.updater(target, "linux", "amd64").
+		Upgrade(context.Background(), "v0.1.0", Options{Apply: true, Verify: true})
+	if err == nil {
+		t.Fatal("expected checksum missing asset error, got nil")
+	}
+	if !strings.Contains(err.Error(), "checksums.txt 未登记资产") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old-binary" {
+		t.Errorf("binary content must stay untouched when asset is omitted from checksums.txt, got %q", got)
+	}
+}
+
+func TestUpgradeCorruptedArchiveKeepsBinary(t *testing.T) {
+	fx := newReleaseFixture(t, fixtureOpts{
+		tag:            "v0.9.0",
+		platform:       "linux-amd64.tar.gz",
+		entryName:      "nga",
+		corruptArchive: true,
+	})
+	target := newTestBinary(t, "nga")
+
+	_, err := fx.updater(target, "linux", "amd64").
+		Upgrade(context.Background(), "v0.1.0", Options{Apply: true, Verify: true})
+	if err == nil {
+		t.Fatal("expected corrupted archive extraction error, got nil")
+	}
+	if !strings.Contains(err.Error(), "解压失败") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old-binary" {
+		t.Errorf("binary content must stay untouched on corrupted archive extraction, got %q", got)
+	}
+}
+
+func TestUpgradeMissingArchiveEntryKeepsBinary(t *testing.T) {
+	fx := newReleaseFixture(t, fixtureOpts{
+		tag:                 "v0.9.0",
+		platform:            "linux-amd64.tar.gz",
+		entryName:           "nga",
+		missingArchiveEntry: true,
+	})
+	target := newTestBinary(t, "nga")
+
+	_, err := fx.updater(target, "linux", "amd64").
+		Upgrade(context.Background(), "v0.1.0", Options{Apply: true, Verify: true})
+	if err == nil {
+		t.Fatal("expected missing binary in archive error, got nil")
+	}
+	if !strings.Contains(err.Error(), "未找到可执行文件") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old-binary" {
+		t.Errorf("binary content must stay untouched when binary entry is missing in archive, got %q", got)
+	}
+}
+
+func TestUpgradePermissionDeniedKeepsBinary(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "nga")
+	if err := os.WriteFile(target, []byte("old-binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0755)
+
+	probe, err := os.MkdirTemp(dir, "probe-")
+	if err == nil {
+		_ = os.Remove(probe)
+		_ = os.Chmod(dir, 0755)
+
+		cmd := exec.Command("chattr", "+i", dir)
+		if err := cmd.Run(); err != nil {
+			t.Skip("skipping permission denied test: running as root and chattr +i is unavailable")
+		}
+		defer exec.Command("chattr", "-i", dir).Run()
+	}
+
+	fx := newReleaseFixture(t, fixtureOpts{tag: "v0.9.0", platform: "linux-amd64.tar.gz", entryName: "nga"})
+	u := fx.updater(target, "linux", "amd64")
+
+	res, err := u.Upgrade(context.Background(), "v0.1.0", Options{Apply: true, Verify: true})
+	if err == nil {
+		t.Fatal("expected permission denied error, got nil")
+	}
+	if !strings.Contains(err.Error(), "不可写") && !strings.Contains(err.Error(), "创建临时目录失败") {
+		t.Errorf("expected permission or unwritable error, got: %v", err)
+	}
+	if res != nil && res.Applied {
+		t.Errorf("result should not be applied: %+v", res)
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old-binary" {
+		t.Errorf("binary content must stay untouched on permission denied, got %q", got)
+	}
+}
+
+func TestUpgradeInvalidTargetDirectoryKeepsBinary(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "nonexistent-subdir", "nga")
+
+	fx := newReleaseFixture(t, fixtureOpts{tag: "v0.9.0", platform: "linux-amd64.tar.gz", entryName: "nga"})
+	u := fx.updater(target, "linux", "amd64")
+
+	_, err := u.Upgrade(context.Background(), "v0.1.0", Options{Apply: true, Verify: true})
+	if err == nil {
+		t.Fatal("expected invalid target directory error, got nil")
+	}
+
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("target should not exist, err: %v", err)
 	}
 }
